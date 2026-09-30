@@ -258,6 +258,45 @@ function PrintDocument({
             useCORS: true,
             backgroundColor: "#ffffff",
             logging: false,
+            onclone: (clonedDocument: Document) => {
+              const clonedPaper = clonedDocument.getElementById(
+                "billing-pdf-document"
+              );
+              if (!clonedPaper || !paperRef.current) return;
+
+              const sourceNodes = [
+                paperRef.current,
+                ...Array.from(paperRef.current.querySelectorAll("*")),
+              ];
+              const clonedNodes = [
+                clonedPaper,
+                ...Array.from(clonedPaper.querySelectorAll("*")),
+              ];
+
+              // html2canvas cannot parse modern oklab/oklch declarations
+              // emitted by Tailwind. Inline the browser-resolved values,
+              // which are RGB-compatible, then remove the original stylesheets.
+              sourceNodes.forEach((sourceNode, index) => {
+                const clonedNode = clonedNodes[index] as
+                  | HTMLElement
+                  | undefined;
+                if (!clonedNode) return;
+                const computed = window.getComputedStyle(sourceNode);
+                for (
+                  let propertyIndex = 0;
+                  propertyIndex < computed.length;
+                  propertyIndex += 1
+                ) {
+                  const property = computed.item(propertyIndex);
+                  const value = computed.getPropertyValue(property);
+                  if (value) clonedNode.style.setProperty(property, value);
+                }
+              });
+
+              clonedDocument
+                .querySelectorAll("style, link[rel='stylesheet']")
+                .forEach((styleNode: Element) => styleNode.remove());
+            },
           },
           jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
         })
@@ -318,6 +357,7 @@ function PrintDocument({
         <div className="overflow-auto bg-[#e9edf1] p-5">
           <div
             ref={paperRef}
+            id="billing-pdf-document"
             className="invoice-paper mx-auto bg-white p-7 text-[10px] text-[#152a45] shadow-xl"
           >
             <div className="flex items-start justify-between border-b-2 border-[#152a45] pb-4">
