@@ -1914,7 +1914,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#f5f6f7] text-ink">
       <aside
-        className={`fixed inset-y-0 z-30 hidden flex-col bg-navy px-4 py-5 text-white transition-all lg:flex ${sidebarSide === "left" ? "left-0" : "right-0"} ${collapsed ? "w-[82px]" : "w-[250px]"}`}
+        className={`fixed inset-y-0 z-30 hidden shrink-0 flex-col overflow-y-auto overscroll-contain bg-navy px-4 py-5 text-white transition-all lg:flex ${sidebarSide === "left" ? "left-0" : "right-0"} ${collapsed ? "w-[82px]" : "w-[250px]"}`}
       >
         <div className="flex items-center justify-between px-1">
           <Logo company={company} collapsed={collapsed} />
@@ -1967,7 +1967,7 @@ export default function Home() {
           </div>
         )}
         <nav
-          className={`mt-8 flex-1 space-y-7 overflow-hidden transition-all duration-300 ${sidebarNavOpen ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"}`}
+          className={`mt-8 flex-none space-y-7 transition-all duration-300 ${sidebarNavOpen ? "max-h-[2000px] opacity-100" : "max-h-0 overflow-hidden opacity-0"}`}
         >
           {navGroups.map(group => (
             <div key={group.label}>
@@ -2055,7 +2055,7 @@ export default function Home() {
           onClick={() => setMobileNav(false)}
         >
           <aside
-            className="h-full w-[280px] bg-navy p-5 text-white"
+            className="h-full w-[280px] overflow-y-auto overscroll-contain bg-navy p-5 text-white"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
