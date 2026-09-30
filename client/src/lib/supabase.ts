@@ -9,7 +9,7 @@ export const supabase = supabaseUrl && supabasePublishableKey
 
 export async function getCompanySettings() {
   if (!supabase) return null;
-  const { data, error } = await supabase.from("company_settings").select("company_name, tagline, address, gstin, state_code").limit(1).maybeSingle();
+  const { data, error } = await supabase.from("company_settings").select("id, company_name, tagline, address, gstin, pan, state, state_code, contact_phone, contact_email, website, logo_url").limit(1).maybeSingle();
   if (error) {
     console.warn("[Supabase] Company settings unavailable until sign-in:", error.message);
     return null;
