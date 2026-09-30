@@ -11,6 +11,7 @@ import {
   ChevronsDown,
   ChevronsUp,
   ClipboardList,
+  Copy,
   Download,
   FileCheck2,
   FilePlus2,
@@ -572,6 +573,37 @@ function Editor({
       }
       if (!result.error && result.data?.id && !draft.id)
         setDraft(current => ({ ...current, id: result.data.id }));
+      const parentId = draft.id || result.data?.id;
+      if (!result.error && parentId) {
+        const itemTable = invoice ? "invoice_items" : "challan_items";
+        const foreignKey = invoice ? "invoice_id" : "challan_id";
+        await supabase.from(itemTable).delete().eq(foreignKey, parentId);
+        const activeRows = draft.rows.filter(
+          r => r.description || Number(r.quantity)
+        );
+        const items = invoice
+          ? activeRows.map((row, index) => ({
+              invoice_id: parentId,
+              sr_no: index + 1,
+              description: row.description,
+              hsn_sac: row.hsn || null,
+              quantity: Number(row.quantity) || 0,
+              unit: row.unit || "Nos",
+              rate: Number(row.rate) || 0,
+              taxable_amount:
+                (Number(row.quantity) || 0) * (Number(row.rate) || 0),
+              gst_rate: Number(row.gstRate) || 0,
+            }))
+          : activeRows.map((row, index) => ({
+              challan_id: parentId,
+              sr_no: index + 1,
+              particulars: row.description,
+              location: row.location || null,
+              quantity: Number(row.quantity) || 0,
+              remarks: draft.notes || null,
+            }));
+        if (items.length) await supabase.from(itemTable).insert(items as any);
+      }
     }
     toast.success("Draft saved", {
       description: `${draft.documentNumber} is available from Recent Documents.`,
@@ -1417,6 +1449,65 @@ export default function Home() {
       ]);
       if (!c.error) setCustomers((c.data || []) as Customer[]);
       if (!p.error) setProducts((p.data || []) as Product[]);
+      const [invoices, challans] = await Promise.all([
+        supabase
+          .from("invoices")
+          .select(
+            "id,document_number,invoice_date,total_amount,status,customer_id"
+          )
+          .order("created_at", { ascending: false })
+          .limit(100),
+        supabase
+          .from("challans")
+          .select(
+            "id,document_number,challan_date,invoice_number,status,customer_id"
+          )
+          .order("created_at", { ascending: false })
+          .limit(100),
+      ]);
+      const dbDocs: Doc[] = [
+        ...((invoices.data || []) as any[]).map(row => ({
+          id: row.id,
+          documentNumber: row.document_number,
+          invoiceNumber: row.document_number,
+          type: "invoice" as const,
+          status: (row.status === "issued"
+            ? "finalized"
+            : "draft") as Draft["status"],
+          customer: { ...emptyCustomer },
+          date: row.invoice_date,
+          vehicle: "",
+          challanNumber: "",
+          notes: "",
+          rows: emptyRows(0),
+          amount: Number(row.total_amount) || 0,
+          tone: "navy",
+        })),
+        ...((challans.data || []) as any[]).map(row => ({
+          id: row.id,
+          documentNumber: row.document_number,
+          invoiceNumber: row.invoice_number || "",
+          type: "challan" as const,
+          status: (row.status === "ready"
+            ? "finalized"
+            : "draft") as Draft["status"],
+          customer: { ...emptyCustomer },
+          date: row.challan_date,
+          vehicle: "",
+          challanNumber: row.document_number,
+          notes: "",
+          rows: emptyRows(0),
+          amount: 0,
+          tone: "orange",
+        })),
+      ];
+      if (dbDocs.length)
+        setDocs(current => [
+          ...dbDocs,
+          ...current.filter(
+            doc => !dbDocs.some(db => db.documentNumber === doc.documentNumber)
+          ),
+        ]);
     })();
   }, []);
   useEffect(
@@ -1448,6 +1539,47 @@ export default function Home() {
   const openDoc = (doc: Doc) => {
     const stored = localStorage.getItem(`reshma-draft-${doc.documentNumber}`);
     setEditor(stored ? JSON.parse(stored) : doc);
+    if (!stored && supabase && doc.id) {
+      const itemTable =
+        doc.type === "invoice" ? "invoice_items" : "challan_items";
+      const foreignKey = doc.type === "invoice" ? "invoice_id" : "challan_id";
+      supabase
+        .from(itemTable)
+        .select("*")
+        .eq(foreignKey, doc.id)
+        .order("sr_no")
+        .then(({ data }) => {
+          if (!data?.length) return;
+          const rows = (data as any[]).map(row => ({
+            description: row.description || row.particulars || "",
+            location: row.location || "",
+            hsn: row.hsn_sac || "",
+            quantity: String(row.quantity ?? ""),
+            rate: String(row.rate ?? ""),
+            gstRate: String(row.gst_rate ?? "18"),
+            unit: row.unit || "Nos",
+          }));
+          setEditor(current =>
+            current?.documentNumber === doc.documentNumber
+              ? { ...current, rows }
+              : current
+          );
+        });
+    }
+  };
+  const duplicateDoc = (doc: Doc) => {
+    const copy = {
+      ...doc,
+      id: undefined,
+      documentNumber: `${doc.type === "invoice" ? "INV" : "CH"}-DRAFT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+      status: "draft" as const,
+      customer: { ...doc.customer },
+      rows: doc.rows.map(row => ({ ...row })),
+    };
+    setEditor(copy);
+    toast.success("Document duplicated", {
+      description: "The duplicate is a new editable draft.",
+    });
   };
   const deleteDoc = async (doc: Doc) => {
     if (!confirm(`Delete ${doc.documentNumber}?`)) return;
@@ -1742,6 +1874,14 @@ export default function Home() {
                             onClick={() => setPreview(doc)}
                           >
                             Preview
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => duplicateDoc(doc)}
+                            title="Duplicate document"
+                          >
+                            <Copy size={14} />
                           </Button>
                           <Button
                             variant="outline"
