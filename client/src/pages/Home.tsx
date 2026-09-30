@@ -268,6 +268,7 @@ function PrintDocument({
         useCORS: true,
         backgroundColor: "#ffffff",
         logging: false,
+        foreignObjectRendering: true,
         onclone: (clonedDocument: Document) => {
           const clonedPaper = clonedDocument.getElementById(
             "billing-pdf-document"
@@ -282,6 +283,17 @@ function PrintDocument({
             clonedPaper,
             ...Array.from(clonedPaper.querySelectorAll("*")),
           ];
+          const colorContext = document
+            .createElement("canvas")
+            .getContext("2d");
+          const resolveUnsupportedColors = (value: string) =>
+            value.replace(/okl(?:ab|ch)\([^)]*\)/gi, colorToken => {
+              if (!colorContext) return "rgb(21, 42, 69)";
+              colorContext.fillStyle = colorToken;
+              return /okl(?:ab|ch)/i.test(colorContext.fillStyle)
+                ? "rgb(21, 42, 69)"
+                : colorContext.fillStyle;
+            });
 
           // Resolve every style in the browser first so modern oklab/oklch
           // declarations cannot be parsed differently by the PDF renderer.
@@ -296,7 +308,12 @@ function PrintDocument({
             ) {
               const property = computed.item(propertyIndex);
               const value = computed.getPropertyValue(property);
-              if (value) clonedNode.style.setProperty(property, value);
+              if (value) {
+                clonedNode.style.setProperty(
+                  property,
+                  resolveUnsupportedColors(value)
+                );
+              }
             }
           });
 
