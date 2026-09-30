@@ -246,62 +246,109 @@ function PrintDocument({
     if (!paperRef.current || downloadingPdf) return;
     setDownloadingPdf(true);
     try {
-      const html2pdf = (await import("html2pdf.js")).default;
       const filename = `${draft.invoiceNumber || draft.documentNumber || "billing-document"}.pdf`;
-      await html2pdf()
-        .set({
-          margin: 0,
-          filename,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: "#ffffff",
-            logging: false,
-            onclone: (clonedDocument: Document) => {
-              const clonedPaper = clonedDocument.getElementById(
-                "billing-pdf-document"
-              );
-              if (!clonedPaper || !paperRef.current) return;
+      await document.fonts?.ready;
+      await Promise.all(
+        Array.from(paperRef.current.querySelectorAll("img")).map(image =>
+          image.complete
+            ? Promise.resolve()
+            : new Promise<void>(resolve => {
+                image.addEventListener("load", () => resolve(), { once: true });
+                image.addEventListener("error", () => resolve(), {
+                  once: true,
+                });
+              })
+        )
+      );
 
-              const sourceNodes = [
-                paperRef.current,
-                ...Array.from(paperRef.current.querySelectorAll("*")),
-              ];
-              const clonedNodes = [
-                clonedPaper,
-                ...Array.from(clonedPaper.querySelectorAll("*")),
-              ];
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+      const canvas = await html2canvas(paperRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        onclone: (clonedDocument: Document) => {
+          const clonedPaper = clonedDocument.getElementById(
+            "billing-pdf-document"
+          );
+          if (!clonedPaper || !paperRef.current) return;
 
-              // html2canvas cannot parse modern oklab/oklch declarations
-              // emitted by Tailwind. Inline the browser-resolved values,
-              // which are RGB-compatible, then remove the original stylesheets.
-              sourceNodes.forEach((sourceNode, index) => {
-                const clonedNode = clonedNodes[index] as
-                  | HTMLElement
-                  | undefined;
-                if (!clonedNode) return;
-                const computed = window.getComputedStyle(sourceNode);
-                for (
-                  let propertyIndex = 0;
-                  propertyIndex < computed.length;
-                  propertyIndex += 1
-                ) {
-                  const property = computed.item(propertyIndex);
-                  const value = computed.getPropertyValue(property);
-                  if (value) clonedNode.style.setProperty(property, value);
-                }
-              });
+          const sourceNodes = [
+            paperRef.current,
+            ...Array.from(paperRef.current.querySelectorAll("*")),
+          ];
+          const clonedNodes = [
+            clonedPaper,
+            ...Array.from(clonedPaper.querySelectorAll("*")),
+          ];
 
-              clonedDocument
-                .querySelectorAll("style, link[rel='stylesheet']")
-                .forEach((styleNode: Element) => styleNode.remove());
-            },
-          },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-        })
-        .from(paperRef.current)
-        .save();
+          // Resolve every style in the browser first so modern oklab/oklch
+          // declarations cannot be parsed differently by the PDF renderer.
+          sourceNodes.forEach((sourceNode, index) => {
+            const clonedNode = clonedNodes[index] as HTMLElement | undefined;
+            if (!clonedNode) return;
+            const computed = window.getComputedStyle(sourceNode);
+            for (
+              let propertyIndex = 0;
+              propertyIndex < computed.length;
+              propertyIndex += 1
+            ) {
+              const property = computed.item(propertyIndex);
+              const value = computed.getPropertyValue(property);
+              if (value) clonedNode.style.setProperty(property, value);
+            }
+          });
+
+          clonedDocument
+            .querySelectorAll("style, link[rel='stylesheet']")
+            .forEach((styleNode: Element) => styleNode.remove());
+        },
+      });
+
+      // Capture the one visible invoice DOM, then slice its pixels into
+      // physical A4 pages. No second HTML layout or table reconstruction runs.
+      const pageHeightPx = Math.round(canvas.width * (297 / 210));
+      const pageCount = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
+      const pdf = new jsPDF({
+        unit: "mm",
+        format: "a4",
+        orientation: "portrait",
+      });
+
+      for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        if (pageIndex > 0) pdf.addPage("a4", "portrait");
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = pageHeightPx;
+        const pageContext = pageCanvas.getContext("2d");
+        if (!pageContext) throw new Error("Could not prepare the PDF page");
+        pageContext.fillStyle = "#ffffff";
+        pageContext.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+        pageContext.drawImage(
+          canvas,
+          0,
+          pageIndex * pageHeightPx,
+          canvas.width,
+          pageHeightPx,
+          0,
+          0,
+          pageCanvas.width,
+          pageCanvas.height
+        );
+        pdf.addImage(
+          pageCanvas.toDataURL("image/jpeg", 0.98),
+          "JPEG",
+          0,
+          0,
+          210,
+          297,
+          undefined,
+          "FAST"
+        );
+      }
+
+      pdf.save(filename);
       toast.success("PDF downloaded");
     } catch (error) {
       console.error("PDF download failed", error);
