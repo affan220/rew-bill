@@ -237,8 +237,43 @@ function PrintDocument({
     })),
     "intra_state"
   );
+  const paperRef = useRef<HTMLDivElement>(null);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const print = () => {
     window.print();
+  };
+  const downloadPdf = async () => {
+    if (!paperRef.current || downloadingPdf) return;
+    setDownloadingPdf(true);
+    try {
+      const html2pdf = (await import("html2pdf.js")).default;
+      const filename = `${draft.invoiceNumber || draft.documentNumber || "billing-document"}.pdf`;
+      await html2pdf()
+        .set({
+          margin: 0,
+          filename,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: "#ffffff",
+            logging: false,
+          },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+        })
+        .from(paperRef.current)
+        .save();
+      toast.success("PDF downloaded");
+    } catch (error) {
+      console.error("PDF download failed", error);
+      toast.error(
+        error instanceof Error && error.message
+          ? `Could not create the PDF: ${error.message}`
+          : "Could not create the PDF. Please try again."
+      );
+    } finally {
+      setDownloadingPdf(false);
+    }
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/60 p-3 backdrop-blur-sm">
@@ -267,9 +302,11 @@ function PrintDocument({
             </Button>
             <Button
               className="bg-orange text-white hover:bg-orange/90"
-              onClick={print}
+              onClick={downloadPdf}
+              disabled={downloadingPdf}
             >
-              <Download size={15} /> Download PDF
+              <Download size={15} />
+              {downloadingPdf ? "Creating PDF…" : "Download PDF"}
             </Button>
             {onEdit && (
               <Button variant="outline" onClick={onEdit}>
@@ -279,7 +316,10 @@ function PrintDocument({
           </div>
         </div>
         <div className="overflow-auto bg-[#e9edf1] p-5">
-          <div className="invoice-paper mx-auto bg-white p-7 text-[10px] text-[#152a45] shadow-xl">
+          <div
+            ref={paperRef}
+            className="invoice-paper mx-auto bg-white p-7 text-[10px] text-[#152a45] shadow-xl"
+          >
             <div className="flex items-start justify-between border-b-2 border-[#152a45] pb-4">
               <div className="flex gap-3">
                 {company.logo_url && (
