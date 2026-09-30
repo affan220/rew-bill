@@ -7,6 +7,9 @@ import {
   BriefcaseBusiness,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
+  ChevronsDown,
+  ChevronsUp,
   ClipboardList,
   Download,
   FileCheck2,
@@ -84,6 +87,7 @@ type Row = {
 type Draft = {
   id?: string;
   documentNumber: string;
+  invoiceNumber?: string;
   type: "invoice" | "challan";
   status: "draft" | "finalized" | "printed";
   customer: Customer;
@@ -130,6 +134,7 @@ const emptyRows = (n = 1): Row[] =>
 const blankDraft = (type: "invoice" | "challan"): Draft => ({
   type,
   documentNumber: `${type === "invoice" ? "INV" : "CH"}-DRAFT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+  invoiceNumber: type === "invoice" ? "" : "",
   status: "draft",
   customer: { ...emptyCustomer },
   date: new Date().toISOString().slice(0, 10),
@@ -329,9 +334,18 @@ function PrintDocument({
               </div>
               <div className="p-3 leading-5">
                 <div className="flex justify-between gap-3">
-                  <b>{invoice ? "Invoice No." : "Challan No."}</b>
-                  <span>{draft.documentNumber}</span>
+                  <b>{invoice ? "Invoice No." : "Invoice No."}</b>
+                  <span>
+                    {draft.invoiceNumber ||
+                      (invoice ? draft.documentNumber : "—")}
+                  </span>
                 </div>
+                {!invoice && (
+                  <div className="flex justify-between gap-3">
+                    <b>Challan No.</b>
+                    <span>{draft.challanNumber || draft.documentNumber}</span>
+                  </div>
+                )}
                 <div className="flex justify-between gap-3">
                   <b>Date</b>
                   <span>{draft.date}</span>
@@ -536,6 +550,7 @@ function Editor({
         : {
             document_number: draft.documentNumber,
             challan_date: draft.date,
+            invoice_number: draft.invoiceNumber || null,
             vehicle_number: draft.vehicle || null,
             status: "draft",
             notes: draft.notes || null,
@@ -644,6 +659,18 @@ function Editor({
                   ))}
                 </div>
               )}
+              <Input
+                value={draft.invoiceNumber || ""}
+                onChange={e => update({ invoiceNumber: e.target.value })}
+                placeholder="Invoice number (optional for challan)"
+              />
+              <Input
+                value={draft.documentNumber}
+                onChange={e => update({ documentNumber: e.target.value })}
+                placeholder={
+                  invoice ? "Bill / document number" : "Challan number"
+                }
+              />
               <Input
                 value={draft.date}
                 onChange={e => update({ date: e.target.value })}
@@ -1356,6 +1383,8 @@ export default function Home() {
   );
   const [active, setActive] = useState("Overview");
   const [collapsed, setCollapsed] = useState(false);
+  const [sidebarSide, setSidebarSide] = useState<"left" | "right">("left");
+  const [sidebarNavOpen, setSidebarNavOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -1745,7 +1774,7 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#f5f6f7] text-ink">
       <aside
-        className={`fixed inset-y-0 left-0 z-30 hidden flex-col bg-navy px-4 py-5 text-white transition-all lg:flex ${collapsed ? "w-[82px]" : "w-[250px]"}`}
+        className={`fixed inset-y-0 z-30 hidden flex-col bg-navy px-4 py-5 text-white transition-all lg:flex ${sidebarSide === "left" ? "left-0" : "right-0"} ${collapsed ? "w-[82px]" : "w-[250px]"}`}
       >
         <div className="flex items-center justify-between px-1">
           <Logo company={company} collapsed={collapsed} />
@@ -1756,6 +1785,34 @@ export default function Home() {
           >
             {collapsed ? <ChevronLeft size={17} /> : <PanelLeft size={17} />}
           </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() =>
+                setSidebarSide(sidebarSide === "left" ? "right" : "left")
+              }
+              className="rounded-lg p-2 text-white/55 hover:bg-white/10"
+              aria-label="Slide sidebar left or right"
+              title="Slide sidebar left / right"
+            >
+              {sidebarSide === "left" ? (
+                <ChevronRight size={16} />
+              ) : (
+                <ChevronLeft size={16} />
+              )}
+            </button>
+            <button
+              onClick={() => setSidebarNavOpen(v => !v)}
+              className="rounded-lg p-2 text-white/55 hover:bg-white/10"
+              aria-label="Slide sidebar navigation up or down"
+              title="Slide sidebar navigation up / down"
+            >
+              {sidebarNavOpen ? (
+                <ChevronsUp size={16} />
+              ) : (
+                <ChevronsDown size={16} />
+              )}
+            </button>
+          </div>
         </div>
         {!collapsed && (
           <div className="mt-10 flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
@@ -1769,7 +1826,9 @@ export default function Home() {
             <ChevronDown size={14} className="text-white/40" />
           </div>
         )}
-        <nav className="mt-8 flex-1 space-y-7">
+        <nav
+          className={`mt-8 flex-1 space-y-7 overflow-hidden transition-all duration-300 ${sidebarNavOpen ? "max-h-[1000px] opacity-100" : "max-h-0 opacity-0"}`}
+        >
           {navGroups.map(group => (
             <div key={group.label}>
               <div
@@ -1805,7 +1864,7 @@ export default function Home() {
         )}
       </aside>
       <div
-        className={`transition-all ${collapsed ? "lg:pl-[82px]" : "lg:pl-[250px]"}`}
+        className={`transition-all ${sidebarSide === "left" ? (collapsed ? "lg:pl-[82px]" : "lg:pl-[250px]") : collapsed ? "lg:pr-[82px]" : "lg:pr-[250px]"}`}
       >
         <header className="sticky top-0 z-20 border-b border-line bg-[#f5f6f7]/90 backdrop-blur">
           <div className="flex h-[74px] items-center gap-4 px-5 sm:px-8">
