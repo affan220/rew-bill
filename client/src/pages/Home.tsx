@@ -263,12 +263,25 @@ function PrintDocument({
 
       const html2canvas = (await import("html2canvas")).default;
       const { jsPDF } = await import("jspdf");
+      const paperRect = paperRef.current.getBoundingClientRect();
+      const keepTogetherRects = Array.from(
+        paperRef.current.querySelectorAll("tbody tr, .mt-3.grid")
+      ).map(element => {
+        const rect = element.getBoundingClientRect();
+        return {
+          top: rect.top - paperRect.top,
+          bottom: rect.bottom - paperRect.top,
+        };
+      });
       const canvas = await html2canvas(paperRef.current, {
         scale: 2,
         useCORS: true,
         backgroundColor: "#ffffff",
         logging: false,
-        foreignObjectRendering: true,
+        // Keep html2canvas on its normal canvas renderer. Its foreignObject
+        // renderer can return an empty SVG image for this cloned, styled page
+        // in Chromium, which produces a completely white PDF.
+        foreignObjectRendering: false,
         onclone: (clonedDocument: Document) => {
           const clonedPaper = clonedDocument.getElementById(
             "billing-pdf-document"
@@ -287,13 +300,20 @@ function PrintDocument({
             .createElement("canvas")
             .getContext("2d");
           const resolveUnsupportedColors = (value: string) =>
-            value.replace(/okl(?:ab|ch)\([^)]*\)/gi, colorToken => {
-              if (!colorContext) return "rgb(21, 42, 69)";
-              colorContext.fillStyle = colorToken;
-              return /okl(?:ab|ch)/i.test(colorContext.fillStyle)
-                ? "rgb(21, 42, 69)"
-                : colorContext.fillStyle;
-            });
+            value
+              // Tailwind also emits color-mix(in oklab, …); html2canvas 1.x
+              // reports the nested color space itself as unsupported.
+              .replace(
+                /color-mix\(\s*in\s+(?:oklab|oklch)\b[^;{}]*/gi,
+                "rgb(21, 42, 69)"
+              )
+              .replace(/okl(?:ab|ch)\([^)]*\)/gi, colorToken => {
+                if (!colorContext) return "rgb(21, 42, 69)";
+                colorContext.fillStyle = colorToken;
+                return /okl(?:ab|ch)/i.test(colorContext.fillStyle)
+                  ? "rgb(21, 42, 69)"
+                  : colorContext.fillStyle;
+              });
 
           // Resolve every style in the browser first so modern oklab/oklch
           // declarations cannot be parsed differently by the PDF renderer.
@@ -317,23 +337,67 @@ function PrintDocument({
             }
           });
 
-          clonedDocument
-            .querySelectorAll("style, link[rel='stylesheet']")
-            .forEach((styleNode: Element) => styleNode.remove());
+          // Keep layout rules, but replace readable stylesheet links with
+          // sanitized inline styles so html2canvas 1.x never parses the
+          // unsupported oklab()/oklch() tokens emitted by Tailwind.
+          Array.from(clonedDocument.styleSheets).forEach(styleSheet => {
+            try {
+              const owner = styleSheet.ownerNode;
+              const cssText = Array.from(styleSheet.cssRules)
+                .map(rule => rule.cssText)
+                .join("\n");
+              if (!owner || !cssText) return;
+
+              const sanitizedCss = resolveUnsupportedColors(cssText);
+              if (owner.nodeName.toLowerCase() === "link") {
+                const inlineStyle = clonedDocument.createElement("style");
+                inlineStyle.textContent = sanitizedCss;
+                owner.parentNode?.replaceChild(inlineStyle, owner);
+              } else if (owner.nodeName.toLowerCase() === "style") {
+                owner.textContent = sanitizedCss;
+              }
+            } catch {
+              // Browser-owned or cross-origin stylesheets cannot be edited.
+            }
+          });
         },
       });
 
       // Capture the one visible invoice DOM, then slice its pixels into
       // physical A4 pages. No second HTML layout or table reconstruction runs.
       const pageHeightPx = Math.round(canvas.width * (297 / 210));
-      const pageCount = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
+      const canvasScale = canvas.width / paperRect.width;
+      const keepTogether = keepTogetherRects.map(block => ({
+        top: block.top * canvasScale,
+        bottom: block.bottom * canvasScale,
+      }));
+      const pageRanges: Array<{ start: number; end: number }> = [];
+      let pageStart = 0;
+      while (pageStart < canvas.height) {
+        let pageEnd = Math.min(pageStart + pageHeightPx, canvas.height);
+        if (pageEnd < canvas.height) {
+          const crossingBlocks = keepTogether.filter(
+            block => block.top < pageEnd && block.bottom > pageEnd
+          );
+          if (crossingBlocks.length) {
+            const safeBreak = Math.min(...crossingBlocks.map(block => block.top));
+            if (safeBreak > pageStart) pageEnd = safeBreak;
+          }
+        }
+        if (pageEnd <= pageStart) {
+          pageEnd = Math.min(pageStart + pageHeightPx, canvas.height);
+        }
+        pageRanges.push({ start: pageStart, end: pageEnd });
+        pageStart = pageEnd;
+      }
       const pdf = new jsPDF({
         unit: "mm",
         format: "a4",
         orientation: "portrait",
       });
 
-      for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      for (let pageIndex = 0; pageIndex < pageRanges.length; pageIndex += 1) {
+        const { start, end } = pageRanges[pageIndex];
         if (pageIndex > 0) pdf.addPage("a4", "portrait");
         const pageCanvas = document.createElement("canvas");
         pageCanvas.width = canvas.width;
@@ -345,13 +409,13 @@ function PrintDocument({
         pageContext.drawImage(
           canvas,
           0,
-          pageIndex * pageHeightPx,
+          start,
           canvas.width,
-          pageHeightPx,
+          end - start,
           0,
           0,
           pageCanvas.width,
-          pageCanvas.height
+          end - start
         );
         pdf.addImage(
           pageCanvas.toDataURL("image/jpeg", 0.98),
