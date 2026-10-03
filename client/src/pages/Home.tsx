@@ -41,7 +41,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { supabase, getCompanySettings } from "../lib/supabase";
 import { toDocumentsCsv } from "../../../shared/export";
-import { calculateInvoiceTotals } from "../../../shared/billing";
+import {
+  calculateInvoiceTotals,
+  defaultPrintSettings,
+  getSplitTaxRateLabel,
+  normalizePrintSettings,
+} from "../../../shared/billing";
 
 type Company = {
   id?: string;
@@ -56,6 +61,12 @@ type Company = {
   contact_email: string;
   website: string;
   logo_url?: string | null;
+  printSettings: Record<string, unknown>;
+  bankName: string;
+  bankAccount: string;
+  bankIfsc: string;
+  bankBranch: string;
+  authorizedSignatory: string;
 };
 type Customer = {
   id?: string;
@@ -113,6 +124,26 @@ const emptyCompany: Company = {
   contact_email: "",
   website: "",
   logo_url: null,
+  printSettings: {},
+  ...defaultPrintSettings,
+};
+
+const withPrintSettings = (value: Partial<Company> | null | undefined): Company => {
+  const source = (value || {}) as Partial<Company> & {
+    print_settings?: unknown;
+  };
+  const printSettings = normalizePrintSettings(
+    source.printSettings ?? source.print_settings
+  );
+  return {
+    ...emptyCompany,
+    ...source,
+    ...printSettings,
+    printSettings:
+      (source.printSettings as Record<string, unknown> | undefined) ||
+      (source.print_settings as Record<string, unknown> | undefined) ||
+      {},
+  };
 };
 const emptyCustomer: Customer = {
   name: "",
@@ -236,6 +267,13 @@ function PrintDocument({
       gstRate: Number(r.gstRate) || 0,
     })),
     "intra_state"
+  );
+  const splitTaxRateLabel = getSplitTaxRateLabel(
+    activeRows.map(r => ({
+      quantity: Number(r.quantity) || 0,
+      rate: Number(r.rate) || 0,
+      gstRate: Number(r.gstRate) || 0,
+    }))
   );
   const paperRef = useRef<HTMLDivElement>(null);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -424,6 +462,7 @@ function PrintDocument({
             id="billing-pdf-document"
             className="invoice-paper mx-auto bg-white p-7 text-[10px] text-[#152a45] shadow-xl"
           >
+            <div className="flex min-h-[1067px] flex-col">
             <div className="flex items-start justify-between border-b-2 border-[#152a45] pb-4">
               <div className="flex gap-3">
                 {company.logo_url && (
@@ -587,45 +626,88 @@ function PrintDocument({
                 ))}
               </tbody>
             </table>
-            {invoice ? (
-              <div className="mt-3 grid grid-cols-[1fr_230px] gap-6">
-                <div className="min-h-[100px] break-words border border-[#152a45] p-3">
-                  <div className="font-bold uppercase tracking-[.15em] text-[#ed5c27]">
-                    Total in words
+            <div className="mt-auto">
+              {invoice ? (
+                <>
+                  <div className="mt-3 grid grid-cols-[1fr_230px] gap-6">
+                    <div className="min-h-[100px] break-words border border-[#152a45] p-3">
+                      <div className="font-bold uppercase tracking-[.15em] text-[#ed5c27]">
+                        Total in words
+                      </div>
+                      <div className="mt-2">{draft.notes || "—"}</div>
+                    </div>
+                    <div className="border border-[#152a45]">
+                      <div className="bg-[#152a45] p-2 font-bold uppercase tracking-[.12em] text-white">
+                        Tax Summary
+                      </div>
+                      <div className="flex justify-between border-b border-[#152a45] p-2">
+                        <span>Amount Before GST</span>
+                        <b>{money(totals.taxable)}</b>
+                      </div>
+                      <div className="flex justify-between border-b border-[#152a45] p-2">
+                        <span>CGST @ {splitTaxRateLabel}</span>
+                        <span>{money(totals.cgst)}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-[#152a45] p-2">
+                        <span>SGST @ {splitTaxRateLabel}</span>
+                        <span>{money(totals.sgst)}</span>
+                      </div>
+                      <div className="flex justify-between bg-[#ed5c27] p-2 font-black text-white">
+                        <span>Total Amount</span>
+                        <span>{money(totals.total)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="mt-2">{draft.notes || "—"}</div>
+                  <div className="mt-3 grid grid-cols-[1fr_230px] gap-6">
+                    <div className="border border-[#152a45] p-3">
+                      <div className="font-bold uppercase tracking-[.15em] text-[#ed5c27]">
+                        Bank Details
+                      </div>
+                      <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+                        <span className="font-semibold">Bank</span>
+                        <span>{company.bankName || "City Union Bank"}</span>
+                        <span className="font-semibold">A/c No.</span>
+                        <span>{company.bankAccount || "—"}</span>
+                        <span className="font-semibold">IFSC</span>
+                        <span>{company.bankIfsc || "—"}</span>
+                        <span className="font-semibold">Branch</span>
+                        <span>{company.bankBranch || "—"}</span>
+                      </div>
+                    </div>
+                    <div className="flex min-h-[132px] flex-col justify-between border border-[#152a45] p-3 text-center">
+                      <div className="font-bold uppercase">
+                        FOR {company.company_name || "COMPANY NAME"}
+                      </div>
+                      <div>
+                        <div className="h-10 border-b border-[#152a45]" />
+                        <div className="mt-2 text-[8px] font-bold uppercase tracking-[.12em]">
+                          {company.authorizedSignatory || "Authorised Signatory"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-3 grid grid-cols-[1fr_230px] gap-6">
+                  <div className="min-h-[100px] whitespace-pre-wrap break-words border border-[#152a45] p-3">
+                    <div className="font-bold uppercase tracking-[.15em] text-[#ed5c27]">
+                      Remarks
+                    </div>
+                    {draft.notes}
+                  </div>
+                  <div className="flex min-h-[132px] flex-col justify-between border border-[#152a45] p-3 text-center font-bold">
+                    <div>FOR {company.company_name || "COMPANY NAME"}</div>
+                    <div>
+                      <div className="h-10 border-b border-[#152a45]" />
+                      <div className="mt-2 text-[8px] uppercase tracking-[.12em]">
+                        {company.authorizedSignatory || "Authorised Signatory"}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="border border-[#152a45]">
-                  <div className="flex justify-between border-b border-[#152a45] p-2">
-                    <span>Amount Before GST</span>
-                    <b>{money(totals.taxable)}</b>
-                  </div>
-                  <div className="flex justify-between border-b border-[#152a45] p-2">
-                    <span>CGST / SGST</span>
-                    <span>{money(totals.cgst + totals.sgst)}</span>
-                  </div>
-                  <div className="flex justify-between bg-[#ed5c27] p-2 font-black text-white">
-                    <span>Total Amount</span>
-                    <span>{money(totals.total)}</span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-3 grid grid-cols-[1fr_230px] gap-6">
-                <div className="min-h-[100px] whitespace-pre-wrap break-words border border-[#152a45] p-3">
-                  <div className="font-bold uppercase tracking-[.15em] text-[#ed5c27]">
-                    Remarks
-                  </div>
-                  {draft.notes}
-                </div>
-                <div className="border border-[#152a45] p-3 text-center font-bold">
-                  FOR {company.company_name || "COMPANY NAME"}
-                  <br />
-                  <br />
-                  <span className="font-normal">Authorised Signature</span>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
+            </div>
           </div>
         </div>
       </div>
@@ -652,6 +734,7 @@ function Editor({
 }) {
   const [draft, setDraft] = useState<Draft>(initial);
   const [customerQuery, setCustomerQuery] = useState(initial.customer.name);
+  const [showCustomerMatches, setShowCustomerMatches] = useState(false);
   const [productQuery, setProductQuery] = useState("");
   const invoice = draft.type === "invoice";
   const storageKey = `reshma-draft-${draft.documentNumber}`;
@@ -665,6 +748,15 @@ function Editor({
       gstRate: Number(r.gstRate) || 0,
     })),
     "intra_state"
+  );
+  const splitTaxRateLabel = getSplitTaxRateLabel(
+    draft.rows
+      .filter(r => r.description || Number(r.quantity))
+      .map(r => ({
+        quantity: Number(r.quantity) || 0,
+        rate: Number(r.rate) || 0,
+        gstRate: Number(r.gstRate) || 0,
+      }))
   );
   const update = (patch: Partial<Draft>) =>
     setDraft(current => ({ ...current, ...patch }));
@@ -815,18 +907,22 @@ function Editor({
                 value={customerQuery}
                 onChange={e => {
                   setCustomerQuery(e.target.value);
+                  setShowCustomerMatches(true);
                   update({
                     customer: { ...draft.customer, name: e.target.value },
                   });
                 }}
                 placeholder="Customer name"
               />
-              {matches.length > 0 && (
+              {showCustomerMatches && matches.length > 0 && (
                 <div className="absolute left-0 top-11 z-10 w-full rounded-xl border border-line bg-white p-1 shadow-xl">
                   {matches.map(c => (
                     <button
                       key={c.id || c.name}
-                      onClick={() => chooseCustomer(c)}
+                      onClick={() => {
+                        chooseCustomer(c);
+                        setShowCustomerMatches(false);
+                      }}
                       className="block w-full rounded-lg px-3 py-2 text-left text-xs hover:bg-[#f5f6f7]"
                     >
                       {c.name}
@@ -923,8 +1019,12 @@ function Editor({
                 <b>{money(totals.taxable)}</b>
               </div>
               <div className="flex justify-between">
-                <span className="text-ink-muted">CGST / SGST</span>
-                <b>{money(totals.cgst + totals.sgst)}</b>
+                <span className="text-ink-muted">CGST @ {splitTaxRateLabel}</span>
+                <b>{money(totals.cgst)}</b>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-muted">SGST @ {splitTaxRateLabel}</span>
+                <b>{money(totals.sgst)}</b>
               </div>
               <div className="flex justify-between border-t border-line pt-3 text-base text-navy">
                 <span>Total</span>
@@ -1136,6 +1236,14 @@ function SettingsPanel({
           contact_email: form.contact_email,
           website: form.website,
           logo_url: form.logo_url || null,
+          print_settings: {
+            ...form.printSettings,
+            bankName: form.bankName,
+            bankAccount: form.bankAccount,
+            bankIfsc: form.bankIfsc,
+            bankBranch: form.bankBranch,
+            authorizedSignatory: form.authorizedSignatory,
+          },
           updated_at: new Date().toISOString(),
         })
         .eq("id", form.id);
@@ -1261,6 +1369,40 @@ function SettingsPanel({
             onChange={e => set("address", e.target.value)}
             placeholder="Address"
           />
+          <div className="sm:col-span-2 rounded-xl border border-line p-4">
+            <div className="eyebrow">Invoice footer</div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Input
+                value={form.bankName}
+                onChange={e => set("bankName", e.target.value)}
+                placeholder="Bank name"
+              />
+              <Input
+                value={form.bankAccount}
+                onChange={e => set("bankAccount", e.target.value)}
+                placeholder="Account number"
+              />
+              <Input
+                value={form.bankIfsc}
+                onChange={e => set("bankIfsc", e.target.value)}
+                placeholder="IFSC"
+              />
+              <Input
+                value={form.bankBranch}
+                onChange={e => set("bankBranch", e.target.value)}
+                placeholder="Branch"
+              />
+              <Input
+                className="sm:col-span-2"
+                value={form.authorizedSignatory}
+                onChange={e => set("authorizedSignatory", e.target.value)}
+                placeholder="Authorized signatory label"
+              />
+            </div>
+            <div className="mt-2 text-xs text-ink-muted">
+              These fields are stored additively in the existing print settings and do not change customers, invoices, or challans.
+            </div>
+          </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-line px-6 py-4">
           <Button variant="outline" onClick={onClose}>
@@ -1553,9 +1695,7 @@ function MasterData({
 
 export default function Home() {
   const [company, setCompany] = useState<Company>(
-    () =>
-      JSON.parse(localStorage.getItem("reshma-company") || "null") ||
-      emptyCompany
+    () => withPrintSettings(JSON.parse(localStorage.getItem("reshma-company") || "null"))
   );
   const [active, setActive] = useState("Overview");
   const [collapsed, setCollapsed] = useState(false);
@@ -1575,7 +1715,13 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       const profile = await getCompanySettings();
-      if (profile) setCompany(c => ({ ...c, ...profile }));
+      if (profile)
+        setCompany(current =>
+          withPrintSettings({
+            ...current,
+            ...(profile as Partial<Company> & { print_settings?: unknown }),
+          })
+        );
       if (!supabase) return;
       const [c, p] = await Promise.all([
         supabase
